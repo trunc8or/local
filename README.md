@@ -8,7 +8,7 @@ Estimate the robot's pose on a known occupancy grid map using:
 
 * LiDAR scans (`/scan`)
 * Odometry (`/odom`)
-* Occupancy grid map (`/map`)
+* Occupancy grid map (`/map_lidar`)
 
 The robot should be able to determine its position on a known map even when starting from an unknown location.
 
@@ -49,7 +49,7 @@ ros2 launch local localization.launch.py
 
 ### Subscribed
 
-* `/map`
+* `/map_lidar`
 * `/scan`
 * `/odom`
 
