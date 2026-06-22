@@ -1,183 +1,83 @@
-# Localisation (ROS 2)
+# Robot Localization (AMCL-based)
 
-This package implements a **particle-filter based robot localisation system** for a mobile robot using a pre-built occupancy grid map.
+This package provides a simple interface to ROS 2 AMCL localization.
+
+It does NOT implement localization itself — instead it uses AMCL from Nav2.
 
 ---
 
 # Goal
 
-Estimate the robot’s pose:
+Get a reliable estimate of robot pose:
 
-```text
-(x, y, θ)
+```text id="r1"
+/estimated_pose
 ```
 
-in the **map frame**, even when the robot is placed at a random position.
+in the map frame using a known occupancy grid map.
 
 ---
 
 # System Overview
 
-The system is split into two parts:
-
-## 1. SLAM (mapping system)
-
-Run separately:
-
-```bash
-ros2 launch slam slam.launch.py
-```
-
-It publishes:
-
-* `/map_lidar` → OccupancyGrid map
-* `map → odom` transform
-
-This provides a **known static map** for localisation.
+The system consists of three parts:
 
 ---
 
-## 2. Localisation (this package)
+## 1. SLAM (Map Provider)
 
-This package subscribes to:
+Run:
+
+```bash id="r2"
+ros2 launch slam slam.launch.py
+```
+
+Publishes:
 
 * `/map_lidar` (OccupancyGrid)
-* `/scan` (LaserScan)
-* `/odom` (Odometry)
+* `map → odom` transform
 
-and estimates the robot pose using a **particle filter**.
+---
+
+## 2. AMCL (Localization Engine)
+
+AMCL is provided by Nav2 and performs:
+
+* particle filter localization
+* scan matching against occupancy grid
+* pose estimation in map frame
 
 It publishes:
 
-* `/estimated_pose` (PoseWithCovarianceStamped)
+* `/amcl_pose`
+* TF: `map → odom`
 
 ---
 
-# Localisation Algorithm (what the code does)
+## 3. This Package (Interface Layer)
 
-This implementation uses a **particle filter**, which works as follows:
+This package:
 
----
+* subscribes to `/amcl_pose`
+* republishes `/estimated_pose`
+* logs robot position
 
-## Step 1: Particles
-
-We maintain many hypotheses of the robot pose:
-
-```text
-particle = (x, y, θ, weight)
-```
-
-Each particle represents a possible robot position.
+It does NOT compute localization itself.
 
 ---
 
-## Step 2: Motion Model (odometry update)
+# Data Flow
 
-Robot movement from `/odom` is used to move all particles:
-
-```text
-new_pose = old_pose + odom_delta + noise
-```
-
-This predicts where the robot might have moved.
-
----
-
-## Step 3: Sensor Model (laser + map comparison)
-
-Each particle is scored based on how well it matches the environment.
-
-Intuition:
-
-* If a particle explains the laser scan well → high weight
-* If it does not match the map → low weight
-
----
-
-## Step 4: Resampling
-
-Particles with higher weights are kept.
-
-Bad particles are discarded.
-
-This concentrates guesses around the correct pose.
-
----
-
-## Step 5: Pose Estimate
-
-Final robot pose is computed as:
-
-```text
-average of all particle poses
-```
-
-and published as:
-
-```
-/estimated_pose
-```
-
----
-
-# ROS Graph
-
-```text
-          /map_lidar
-SLAM  ------------------+
-                        |
-          /scan         v
-LiDAR  ------------>  Localization Node  ----> /estimated_pose
-                        ^
-          /odom         |
-Robot ------------------+
-```
-
----
-
-# How to run
-
-## 1. Start SLAM (map provider)
-
-```bash
-ros2 launch slam slam.launch.py
-```
-
----
-
-## 2. Start localisation
-
-```bash
-ros2 launch local local_launch.py
-```
-
----
-
-## 3. Visualise in RViz
-
-Add:
-
-* Map → `/map_lidar`
-* LaserScan → `/scan`
-* Pose → `/estimated_pose`
-
----
-
-# File Structure
-
-```text
-local/
-├── launch/
-│   └── local_launch.py
-├── config/
-│   └── local.yaml
-├── localization/
-│   ├── __init__.py
-│   └── localization_node.py
-├── resource/
-├── package.xml
-├── setup.py
-└── setup.cfg
+```text id="r3"
+SLAM → /map_lidar
+          ↓
+        AMCL
+          ↓
+     /amcl_pose
+          ↓
+  local package node
+          ↓
+   /estimated_pose
 ```
 
 ---
@@ -186,58 +86,80 @@ local/
 
 ## Subscribed
 
-| Topic      | Type                   | Purpose         |
-| ---------- | ---------------------- | --------------- |
-| /map_lidar | nav_msgs/OccupancyGrid | environment map |
-| /scan      | sensor_msgs/LaserScan  | LiDAR data      |
-| /odom      | nav_msgs/Odometry      | motion estimate |
+| Topic      | Type                      | Source |
+| ---------- | ------------------------- | ------ |
+| /amcl_pose | PoseWithCovarianceStamped | AMCL   |
 
 ---
 
 ## Published
 
-| Topic           | Type                      | Purpose                 |
-| --------------- | ------------------------- | ----------------------- |
-| /estimated_pose | PoseWithCovarianceStamped | robot pose in map frame |
+| Topic           | Type                      | Purpose             |
+| --------------- | ------------------------- | ------------------- |
+| /estimated_pose | PoseWithCovarianceStamped | cleaned pose output |
 
 ---
 
-# Important Notes
+# How to Run
 
-* SLAM is **not part of this package**
-* This package assumes the map is already known
-* Localization improves odometry using laser + map alignment
-* Particle filter is a probabilistic estimation method
+## 1. Start SLAM (map provider)
 
----
-
-# Limitations (current version)
-
-* Sensor model is simplified (not full ray-casting yet)
-* Accuracy depends on map quality
-* Performance depends on number of particles
+```bash id="r4"
+ros2 launch slam slam.launch.py
+```
 
 ---
 
-# Next improvements (if needed)
+## 2. Start AMCL (Nav2 localization)
 
-* Replace simple scoring with ray-casting
-* Add proper likelihood field model
-* Improve initialization (global localization)
-* Tune particle count for performance
+```bash id="r5"
+ros2 launch nav2_bringup localization_launch.py map:=<your_map.yaml>
+```
+
+---
+
+## 3. Start this interface node
+
+```bash id="r6"
+ros2 launch local local_launch.py
+```
+
+---
+
+# Visualization (RViz2)
+
+Add displays:
+
+* Map → `/map_lidar`
+* LaserScan → `/scan`
+* Pose → `/amcl_pose` or `/estimated_pose`
+* TF → enabled
+
+---
+
+# Why AMCL is used
+
+AMCL provides:
+
+* robust localization
+* proven particle filter implementation
+* automatic recovery from lost localization
+* industry-standard solution in ROS 2 Nav2
+
+---
+
+# What this package adds
+
+This package is a lightweight wrapper that:
+
+* simplifies access to pose data
+* standardizes output topic `/estimated_pose`
+* allows future integration with other modules
 
 ---
 
 # Summary
 
-This system answers:
-
-> “Where am I on a known map?”
-
-by combining:
-
-* motion (odometry)
-* perception (LiDAR)
-* map knowledge (occupancy grid)
-
-using a **particle filter probabilistic estimator**.
+* SLAM builds the map
+* AMCL finds the robot in the map
+* this package forwards the pose for other systems
